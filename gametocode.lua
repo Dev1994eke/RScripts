@@ -107,14 +107,7 @@ local function GetPath(Object)
 		table.concat(Parts, "][")
 end
 
-local function OneLine(Text)
-	Text = Text:gsub("\r\n", " ")
-	Text = Text:gsub("\n", " ")
-	Text = Text:gsub("\r", " ")
-	Text = Text:gsub("%s+", " ")
-	Text = Text:match("^%s*(.-)%s*$")
-	return Text
-end
+
 
 local function SerializeValue(Value)
 	local ValueType = typeof(Value)
@@ -492,7 +485,6 @@ GenerateButton.MouseButton1Click:Connect(function()
 	local Success, Code, Count = pcall(GenerateCode)
 
 	if Success then
-		Code = OneLine(Code)
 
 		Output.Text = Code
 
