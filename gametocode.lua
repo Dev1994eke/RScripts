@@ -1,11 +1,19 @@
--- // SHADOWDEV MADE THIS AWESOME SCRIPT
--- // RUNNABLE SCRIPT
+--[[
+    Optimized Game Copier
+    - Safer property serialization
+    - Preserves hierarchy
+    - Handles unsupported properties without stopping
+    - Avoids unnecessary work
+    - Uses chunked yielding for large hierarchies
+]]
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
 
 local Player = Players.LocalPlayer
 
+--// GUI
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "GameCopier"
 ScreenGui.ResetOnSpawn = false
@@ -65,13 +73,13 @@ Output.Position = UDim2.fromOffset(10, 95)
 Output.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
 Output.TextColor3 = Color3.fromRGB(220, 220, 220)
 Output.PlaceholderColor3 = Color3.fromRGB(100, 100, 100)
-Output.Text = ""
 Output.PlaceholderText = "Generated code will appear here..."
+Output.Text = ""
 Output.TextSize = 13
 Output.Font = Enum.Font.Code
 Output.TextXAlignment = Enum.TextXAlignment.Left
 Output.TextYAlignment = Enum.TextYAlignment.Top
-Output.MultiLine = false
+Output.MultiLine = true
 Output.ClearTextOnFocus = false
 Output.TextEditable = true
 Output.Parent = Main
@@ -80,203 +88,159 @@ local OutputCorner = Instance.new("UICorner")
 OutputCorner.CornerRadius = UDim.new(0, 6)
 OutputCorner.Parent = Output
 
-local function CleanName(Name)
-	Name = tostring(Name)
-	return Name:gsub("[^%w_]", "_")
+--// Serializer
+
+local function Quote(value)
+	return string.format("%q", tostring(value))
 end
 
-local function Quote(String)
-	String = tostring(String)
-	return string.format("%q", String)
-end
-
-local function GetPath(Object)
-	local Parts = {}
-	local Current = Object
-
-	while Current and Current ~= game do
-		table.insert(Parts, 1, Quote(Current.Name))
-		Current = Current.Parent
+local function Number(value)
+	if value ~= value then
+		return "0/0"
+	elseif value == math.huge then
+		return "math.huge"
+	elseif value == -math.huge then
+		return "-math.huge"
 	end
 
-	if Current ~= game then
-		return nil
-	end
-
-	return "game" .. string.rep(":FindFirstChild", 0) .. "[" ..
-		table.concat(Parts, "][")
+	return string.format("%.17g", value)
 end
 
+local function Serialize(value)
+	local valueType = typeof(value)
 
+	if valueType == "string" then
+		return Quote(value)
 
-local function SerializeValue(Value)
-	local ValueType = typeof(Value)
+	elseif valueType == "number" then
+		return Number(value)
 
-	if ValueType == "string" then
-		return Quote(Value)
+	elseif valueType == "boolean" then
+		return tostring(value)
 
-	elseif ValueType == "number" then
-		if Value ~= Value then
-			return "0/0"
-		end
+	elseif valueType == "BrickColor" then
+		return "BrickColor.new(" .. Quote(value.Name) .. ")"
 
-		if Value == math.huge then
-			return "math.huge"
-		end
-
-		if Value == -math.huge then
-			return "-math.huge"
-		end
-
-		return tostring(Value)
-
-	elseif ValueType == "boolean" then
-		return tostring(Value)
-
-	elseif ValueType == "BrickColor" then
-		return "BrickColor.new(" .. Quote(Value.Name) .. ")"
-
-	elseif ValueType == "Color3" then
+	elseif valueType == "Color3" then
 		return string.format(
 			"Color3.new(%s,%s,%s)",
-			Value.R,
-			Value.G,
-			Value.B
+			Number(value.R),
+			Number(value.G),
+			Number(value.B)
 		)
 
-	elseif ValueType == "Vector2" then
+	elseif valueType == "Vector2" then
 		return string.format(
 			"Vector2.new(%s,%s)",
-			Value.X,
-			Value.Y
+			Number(value.X),
+			Number(value.Y)
 		)
 
-	elseif ValueType == "Vector3" then
+	elseif valueType == "Vector3" then
 		return string.format(
 			"Vector3.new(%s,%s,%s)",
-			Value.X,
-			Value.Y,
-			Value.Z
+			Number(value.X),
+			Number(value.Y),
+			Number(value.Z)
 		)
 
-	elseif ValueType == "UDim" then
+	elseif valueType == "UDim" then
 		return string.format(
-			"UDim.new(%s,%s)",
-			Value.Scale,
-			Value.Offset
+			"UDim.new(%s,%d)",
+			Number(value.Scale),
+			value.Offset
 		)
 
-	elseif ValueType == "UDim2" then
+	elseif valueType == "UDim2" then
 		return string.format(
-			"UDim2.new(%s,%s,%s,%s)",
-			Value.X.Scale,
-			Value.X.Offset,
-			Value.Y.Scale,
-			Value.Y.Offset
+			"UDim2.new(%s,%d,%s,%d)",
+			Number(value.X.Scale),
+			value.X.Offset,
+			Number(value.Y.Scale),
+			value.Y.Offset
 		)
 
-	elseif ValueType == "CFrame" then
-		local Components = {Value:GetComponents()}
+	elseif valueType == "CFrame" then
+		local components = {value:GetComponents()}
 
-		for i, v in ipairs(Components) do
-			Components[i] = tostring(v)
+		for i = 1, #components do
+			components[i] = Number(components[i])
 		end
 
-		return "CFrame.new(" .. table.concat(Components, ",") .. ")"
+		return "CFrame.new(" .. table.concat(components, ",") .. ")"
 
-	elseif ValueType == "EnumItem" then
-		return tostring(Value)
+	elseif valueType == "EnumItem" then
+		return tostring(value)
 
-	elseif ValueType == "Ray" then
+	elseif valueType == "Ray" then
 		return string.format(
 			"Ray.new(%s,%s)",
-			SerializeValue(Value.Origin),
-			SerializeValue(Value.Direction)
+			Serialize(value.Origin),
+			Serialize(value.Direction)
 		)
 
-	elseif ValueType == "ColorSequence" then
-		local Keypoints = {}
-
-		for _, Keypoint in ipairs(Value.Keypoints) do
-			table.insert(
-				Keypoints,
-				string.format(
-					"ColorSequenceKeypoint.new(%s,%s)",
-					Keypoint.Time,
-					SerializeValue(Keypoint.Value)
-				)
-			)
-		end
-
-		return "ColorSequence.new({" .. table.concat(Keypoints, ",") .. "})"
-
-	elseif ValueType == "NumberSequence" then
-		local Keypoints = {}
-
-		for _, Keypoint in ipairs(Value.Keypoints) do
-			table.insert(
-				Keypoints,
-				string.format(
-					"NumberSequenceKeypoint.new(%s,%s,%s)",
-					Keypoint.Time,
-					Keypoint.Value,
-					Keypoint.Envelope
-				)
-			)
-		end
-
-		return "NumberSequence.new({" .. table.concat(Keypoints, ",") .. "})"
-
-	elseif ValueType == "NumberRange" then
+	elseif valueType == "NumberRange" then
 		return string.format(
 			"NumberRange.new(%s,%s)",
-			Value.Min,
-			Value.Max
+			Number(value.Min),
+			Number(value.Max)
 		)
 
-	elseif ValueType == "PhysicalProperties" then
+	elseif valueType == "ColorSequence" then
+		local points = {}
+
+		for _, point in ipairs(value.Keypoints) do
+			points[#points + 1] = string.format(
+				"ColorSequenceKeypoint.new(%s,%s)",
+				Number(point.Time),
+				Serialize(point.Value)
+			)
+		end
+
+		return "ColorSequence.new({" .. table.concat(points, ",") .. "})"
+
+	elseif valueType == "NumberSequence" then
+		local points = {}
+
+		for _, point in ipairs(value.Keypoints) do
+			points[#points + 1] = string.format(
+				"NumberSequenceKeypoint.new(%s,%s,%s)",
+				Number(point.Time),
+				Number(point.Value),
+				Number(point.Envelope)
+			)
+		end
+
+		return "NumberSequence.new({" .. table.concat(points, ",") .. "})"
+
+	elseif valueType == "PhysicalProperties" then
 		return string.format(
 			"PhysicalProperties.new(%s,%s,%s,%s,%s)",
-			Value.Density,
-			Value.Friction,
-			Value.Elasticity,
-			Value.FrictionWeight,
-			Value.ElasticityWeight
+			Number(value.Density),
+			Number(value.Friction),
+			Number(value.Elasticity),
+			Number(value.FrictionWeight),
+			Number(value.ElasticityWeight)
 		)
 	end
 
 	return nil
 end
 
-local function AddProperty(Code, Object, Property, Variable)
-	local Success, Value = pcall(function()
-		return Object[Property]
-	end)
-
-	if not Success then
-		return
-	end
-
-	local Serialized = SerializeValue(Value)
-
-	if Serialized then
-		table.insert(
-			Code,
-			Variable .. "." .. Property .. "=" .. Serialized
-		)
-	end
-end
-
+--// Properties that are commonly useful and serializable.
+--// The serializer safely ignores properties that don't exist.
 local Properties = {
-	"Name",
 	"Archivable",
-	"Transparency",
-	"Reflectance",
+
+	-- BasePart
+	"Anchored",
 	"CanCollide",
 	"CanTouch",
 	"CanQuery",
-	"Anchored",
 	"Massless",
+	"CastShadow",
+	"Reflectance",
+	"Transparency",
 	"Size",
 	"Position",
 	"Orientation",
@@ -284,10 +248,20 @@ local Properties = {
 	"Color",
 	"BrickColor",
 	"Material",
-	"CastShadow",
+
+	-- GUI
 	"Visible",
 	"Active",
 	"Selectable",
+	"BackgroundColor3",
+	"BackgroundTransparency",
+	"BorderColor3",
+	"BorderSizePixel",
+	"ZIndex",
+	"LayoutOrder",
+	"AutomaticSize",
+
+	-- Text
 	"Text",
 	"TextColor3",
 	"TextSize",
@@ -296,252 +270,285 @@ local Properties = {
 	"TextXAlignment",
 	"TextYAlignment",
 	"Font",
-	"BackgroundColor3",
-	"BackgroundTransparency",
-	"BorderColor3",
-	"BorderSizePixel",
+	"TextTransparency",
+	"TextStrokeColor3",
+	"TextStrokeTransparency",
+	"PlaceholderText",
+	"PlaceholderColor3",
+	"MaxTextLength",
+
+	-- Image
 	"Image",
 	"ImageColor3",
 	"ImageTransparency",
-	"Enabled",
+
+	-- Scrolling
+	"ScrollBarThickness",
+	"CanvasSize",
+	"CanvasPosition",
+
+	-- Sound
 	"Volume",
 	"PlaybackSpeed",
 	"Looped",
 	"SoundId",
+
+	-- Animation
 	"AnimationId",
-	"Value",
+
+	-- Lighting / effects
 	"Brightness",
 	"Range",
 	"Shadows",
-	"ZIndex",
-	"LayoutOrder",
-	"ScrollBarThickness",
-	"CanvasSize",
-	"CanvasPosition",
-	"PlaceholderText",
-	"PlaceholderColor3",
-	"MaxTextLength",
-	"AutomaticSize",
-	"TextTransparency",
-	"TextStrokeColor3",
-	"TextStrokeTransparency",
+
+	-- Generic
+	"Enabled",
+	"Value",
 }
 
-local function GenerateObject(Code, Object, ParentExpression, Variables, State)
-	if Object == workspace then
-		return 0
+--// Cache whether a property can be read.
+-- This avoids repeatedly doing expensive work for properties
+-- that aren't supported by a class.
+local PropertyCache = {}
+
+local function ReadProperty(object, property)
+	local className = object.ClassName
+
+	local classCache = PropertyCache[className]
+
+	if not classCache then
+		classCache = {}
+		PropertyCache[className] = classCache
 	end
 
-	if Object == ReplicatedStorage then
-		return 0
+	if classCache[property] == false then
+		return nil
 	end
 
-	local ClassName = Object.ClassName
+	local success, value = pcall(function()
+		return object[property]
+	end)
 
-	Variables.Count += 1
-	local VariableName = "v" .. tostring(Variables.Count)
+	if not success then
+		classCache[property] = false
+		return nil
+	end
 
-	Variables[Object] = VariableName
-	State.Processed += 1
-	if State.Processed % 100 == 0 then
+	classCache[property] = true
+
+	return value
+end
+
+local function AddProperty(code, object, property, variable)
+	local value = ReadProperty(object, property)
+
+	if value == nil then
+		return
+	end
+
+	local serialized = Serialize(value)
+
+	if serialized then
+		code[#code + 1] =
+			variable ..
+			"." ..
+			property ..
+			"=" ..
+			serialized
+	end
+end
+
+local function AddAttributes(code, object, variable)
+	local success, attributes = pcall(function()
+		return object:GetAttributes()
+	end)
+
+	if not success then
+		return
+	end
+
+	for name, value in pairs(attributes) do
+		local serialized = Serialize(value)
+
+		if serialized then
+			code[#code + 1] =
+				variable ..
+				":SetAttribute(" ..
+				Quote(name) ..
+				"," ..
+				serialized ..
+				")"
+		end
+	end
+end
+
+--// Object generation
+
+local function GenerateObject(code, object, parentExpression, state)
+	state.count += 1
+
+	-- Yield occasionally so huge maps don't freeze the client.
+	if state.count % state.yieldEvery == 0 then
 		task.wait()
 	end
 
-	table.insert(
-		Code,
+	local variable = "v" .. state.count
+
+	code[#code + 1] =
 		"local " ..
-			VariableName ..
-			"=Instance.new(" ..
-			Quote(ClassName) ..
-			")"
-	)
+		variable ..
+		"=Instance.new(" ..
+		Quote(object.ClassName) ..
+		")"
 
-	local NameSuccess = pcall(function()
-		Object.Name = Object.Name
-	end)
+	code[#code + 1] =
+		variable ..
+		".Name=" ..
+		Quote(object.Name)
 
-	if NameSuccess then
-		table.insert(
-			Code,
-			VariableName ..
-				".Name=" ..
-				Quote(Object.Name)
-		)
+	for _, property in ipairs(Properties) do
+		AddProperty(code, object, property, variable)
 	end
 
-	for _, Property in ipairs(Properties) do
-		if Property ~= "Name" then
-			AddProperty(
-				Code,
-				Object,
-				Property,
-				VariableName
-			)
-		end
-	end
+	AddAttributes(code, object, variable)
 
-	local AttributeSuccess, Attributes = pcall(function()
-		return Object:GetAttributes()
-	end)
+	code[#code + 1] =
+		variable ..
+		".Parent=" ..
+		parentExpression
 
-	if AttributeSuccess then
-		for Name, Value in pairs(Attributes) do
-			local Serialized = SerializeValue(Value)
-
-			if Serialized then
-				table.insert(
-					Code,
-					VariableName ..
-						":SetAttribute(" ..
-						Quote(Name) ..
-						"," ..
-						Serialized ..
-						")"
-				)
-			end
-		end
-	end
-
-	table.insert(
-		Code,
-		VariableName ..
-			".Parent=" ..
-			ParentExpression
-	)
-
-	local Count = 1
-
-	for _, Child in ipairs(Object:GetChildren()) do
-		local Before = #Code
-
+	for _, child in ipairs(object:GetChildren()) do
 		GenerateObject(
-			Code,
-			Child,
-			VariableName,
-			Variables,
-			State
+			code,
+			child,
+			variable,
+			state
 		)
-
-		if #Code > Before then
-			Count += 1
-		end
 	end
-
-	return Count
 end
 
 local function GenerateCode()
-	local Code = {}
-	local Variables = {Count = 0}
-	local State = {Processed = 0}
+	local code = {}
 
-	local Total = 0
+	local state = {
+		count = 0,
+		yieldEvery = 250,
+	}
 
-	for _, Object in ipairs(workspace:GetChildren()) do
-		local Before = #Code
-
+	-- Workspace
+	for _, object in ipairs(workspace:GetChildren()) do
 		GenerateObject(
-			Code,
-			Object,
+			code,
+			object,
 			"workspace",
-			Variables,
-			State
+			state
 		)
-
-		if #Code > Before then
-			Total += 1
-		end
 	end
 
-	for _, Object in ipairs(ReplicatedStorage:GetChildren()) do
-		local Before = #Code
+	-- ReplicatedStorage
+	local replicatedStorageExpression =
+		'game:GetService("ReplicatedStorage")'
 
+	for _, object in ipairs(ReplicatedStorage:GetChildren()) do
 		GenerateObject(
-			Code,
-			Object,
-			"game:GetService(" ..
-				Quote("ReplicatedStorage") ..
-				")",
-			Variables,
-			State
+			code,
+			object,
+			replicatedStorageExpression,
+			state
 		)
-
-		if #Code > Before then
-			Total += 1
-		end
 	end
 
-	return table.concat(Code, "\n"), Total
+	return table.concat(code, "\n"), state.count
 end
 
+--// Generate button
+
+local Generating = false
+
 GenerateButton.MouseButton1Click:Connect(function()
+	if Generating then
+		return
+	end
+
+	Generating = true
+
 	GenerateButton.Active = false
 	GenerateButton.AutoButtonColor = false
-
+	GenerateButton.Text = "Generating..."
 	Status.Text = "Generating..."
+	Output.Text = ""
 
 	task.wait()
 
-	local Success, Code, Count = pcall(GenerateCode)
+	local success, result, count = pcall(GenerateCode)
 
-	if Success then
-
-		Output.Text = Code
+	if success then
+		Output.Text = result
 
 		Status.Text =
 			"Generated " ..
-			tostring(Count) ..
-			" objects | Single line"
+			tostring(count) ..
+			" objects"
 	else
 		Output.Text =
-			"-- Generation error: " ..
-			tostring(Code)
+			"-- Generation error:\n-- " ..
+			tostring(result)
 
 		Status.Text = "Generation failed"
 	end
 
+	GenerateButton.Text = "Generate"
 	GenerateButton.Active = true
 	GenerateButton.AutoButtonColor = true
+
+	Generating = false
 end)
 
-local UserInputService = game:GetService("UserInputService")
+--// Dragging
 
-local Dragging = false
-local DragStart
-local StartPosition
+local dragging = false
+local dragStart
+local startPosition
 
-Title.InputBegan:Connect(function(Input)
-	if Input.UserInputType == Enum.UserInputType.MouseButton1
-		or Input.UserInputType == Enum.UserInputType.Touch then
+Title.InputBegan:Connect(function(input)
+	if input.UserInputType ~= Enum.UserInputType.MouseButton1
+		and input.UserInputType ~= Enum.UserInputType.Touch then
+		return
+	end
 
-		Dragging = true
-		DragStart = Input.Position
-		StartPosition = Main.Position
+	dragging = true
+	dragStart = input.Position
+	startPosition = Main.Position
 
-		Input.Changed:Connect(function()
-			if Input.UserInputState == Enum.UserInputState.End then
-				Dragging = false
+	local connection
+
+	connection = input.Changed:Connect(function()
+		if input.UserInputState == Enum.UserInputState.End then
+			dragging = false
+
+			if connection then
+				connection:Disconnect()
 			end
-		end)
-	end
+		end
+	end)
 end)
 
-UserInputService.InputChanged:Connect(function(Input)
-	if not Dragging then
+UserInputService.InputChanged:Connect(function(input)
+	if not dragging then
 		return
 	end
 
-	if Input.UserInputType ~= Enum.UserInputType.MouseMovement
-		and Input.UserInputType ~= Enum.UserInputType.Touch then
+	if input.UserInputType ~= Enum.UserInputType.MouseMovement
+		and input.UserInputType ~= Enum.UserInputType.Touch then
 		return
 	end
 
-	local Delta = Input.Position - DragStart
+	local delta = input.Position - dragStart
 
 	Main.Position = UDim2.new(
-		StartPosition.X.Scale,
-		StartPosition.X.Offset + Delta.X,
-		StartPosition.Y.Scale,
-		StartPosition.Y.Offset + Delta.Y
+		startPosition.X.Scale,
+		startPosition.X.Offset + delta.X,
+		startPosition.Y.Scale,
+		startPosition.Y.Offset + delta.Y
 	)
 end)
